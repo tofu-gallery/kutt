@@ -3,7 +3,7 @@
 This repository is Tofu's copy of **thedevs-network/kutt** (licence: MIT), listed in Tofu's app gallery as **Kutt**: short links with click counts, on your own address.
 
 - `main` mirrors the upstream repository and is never committed to by Tofu.
-- `tofu` carries Tofu's own changes; tags named `pin/<date>` mark the versions the gallery points to. The current pin is `pin/2026-10-25`.
+- `tofu` carries Tofu's own changes; tags named `pin/<date>` mark the versions the gallery points to. The current pin is `pin/2026-10-25.1`.
 - A visitor who chooses this app gets a private snapshot of the pinned version in their own Tofu account. Their copy does not follow upstream updates.
 - Upstream: https://github.com/thedevs-network/kutt at `029da42b2459693681886665589fd9512d6b473c` (2026-10-19, package version 3.2.6).
 
@@ -31,6 +31,7 @@ Each change is a `Tofu: ...` commit on `tofu` whose message gives its reason.
   - `server/server.js`: turns row-level security on for Kutt's tables before the server takes requests (see "Kutt's tables and Supabase's Data API").
   - `server/handlers/auth.handler.js`, `server/handlers/locals.handler.js` and `server/views/partials/auth/form_admin.hbs`: the setup password for the first account (see "The first account").
   - `server/env.js` also declares the three new settings, `DB_SSL_REJECT_UNAUTHORIZED` (default `true`), `DB_SSL_CA` and `ADMIN_SETUP_PASSWORD`.
+- `server/handlers/auth.handler.js` also signs the owner in once the admin account is made. Upstream signs the new account's sign-in token with what it inserted, which has no account id, so the token has no `sub`, Kutt's own sign-in check refuses it (`server/passport.js`), and the new administrator lands on the sign-in form. Now the token is signed for the stored account. This is upstream Kutt 3.2.6's code, unchanged on upstream's main.
 - `Dockerfile`:
   - `package.json` and `package-lock.json` are copied in with `COPY` instead of bind-mounted for `npm ci`. Tofu's container hosting builds with buildah, not Docker's BuildKit, and a cache mount is the one `RUN --mount` form a gallery image has been built with there so far (HomeBox's). The cache mount stays.
   - `ENV CUSTOM_DOMAIN_USE_HTTPS=true`: a domain connected to the app on Tofu is served over HTTPS, so short links on a custom domain start with `https://`. The owner can set it back to `false`.
@@ -44,6 +45,7 @@ A new Kutt has no account. Its first visitor is sent to `/create-admin`, and the
 
 1. After the first deploy, the owner opens the app's **Keys & settings** page in Tofu, saves `ADMIN_SETUP_PASSWORD` with **Hide this value after saving** turned on (at least 12 characters; a long random one is best, for example the output of `openssl rand -base64 24`), and deploys again.
 2. The owner opens the copy, which shows "Create an Admin account first", and enters their email address, a password for the account, and the setup password.
+3. The page says "Welcome. Redirecting to homepage..." and opens the homepage signed in to the new administrator account, with **Admin** and **Settings** in the header. (Upstream Kutt 3.2.6 does not sign the new account in at this step, so its owner sees the sign-in form and signs in again; this copy does, see "What Tofu changes".)
 
 - Until `ADMIN_SETUP_PASSWORD` is saved, the page explains this and shows no form, and a request to create the account (`POST /api/auth/create-admin`, also as `/api/v2/...`) is refused. A saved value shorter than 12 characters is refused the same way.
 - Wrong setup passwords are counted for the whole server, not per visitor: after ten wrong ones in ten minutes, every attempt, the right one included, waits until ten minutes have passed. A stranger who keeps guessing can therefore make the owner wait. Making the app private on Tofu until the account exists stops that.
@@ -80,7 +82,7 @@ Tofu's databases are Supabase PostgreSQL. On a database whose default privileges
 
 - The image builds on Tofu's container hosting with buildah, including the npm cache mount and better-sqlite3's install step, which downloads a prebuilt binary for Alpine (linux-musl) during `npm ci`. better-sqlite3 is not used with PostgreSQL, but it is one of Kutt's dependencies.
 - The first start through Tofu's `DATABASE_URL` (the transaction pooler, port 6543), with TLS checked against `SUPABASE_CA_CERT`: the log shows the migrations, the row-level security line, then `> Ready on http://localhost:80`. Kutt's queries go through knex and node-postgres, which use only unnamed statements, so the runtime logs should show no `prepared statement` errors (SQLSTATE 26000 or 42P05).
-- The `/create-admin` page before and after the owner saves `ADMIN_SETUP_PASSWORD` and deploys again.
+- The `/create-admin` page before and after the owner saves `ADMIN_SETUP_PASSWORD` and deploys again, and the owner signed in on the homepage right after creating the account. The sign-in cookie is marked `Secure` in production, which the copy's HTTPS address allows.
 - Short links on the copy's address redirect, and their visits are counted with the visitor's country, which depends on whether Tofu's proxy puts the visitor's own address first in `X-Forwarded-For`. If a visitor could set that header themselves, they could also choose the address that rate limits (when turned on) count them under.
 - A custom domain connected on Tofu reaches the container with its own `Host`, so Kutt's custom domains work.
 
@@ -93,6 +95,20 @@ Tofu's databases are Supabase PostgreSQL. On a database whose default privileges
 - Upstream's lockfile is used as it is. `npm audit --omit=dev` lists 12 advisories in the production packages (3 critical: handlebars and hbs, the server's own page templates, and proxy-addr), which this copy does not change.
 
 ## Verification
+
+### `pin/2026-10-25.1`: signed in after creating the admin account
+
+2026-10-25, on macOS arm64, against 127.0.0.1 only, for the change to `server/handlers/auth.handler.js`. No Docker, nothing deployed. Node 22.22.3 and npm 10.9.8.
+
+- The tree: `git archive` of `742816483138496aca6dcbf0bb4041d2e6fcd066`, unpacked with every file's execute bit removed (no file left executable). `NODE_ENV=production npm ci --omit=dev` added 245 packages, with the same geoip-lite warning.
+- Database: a new database on the local PostgreSQL 14.24 server, which has `anon` and `authenticated` roles; the old default privileges were given to them on new tables in `public`. That server has no TLS, so `DATABASE_URL` ended in `?sslmode=disable`; the TLS code is unchanged since the first round below.
+- Run as the image's `CMD` (`npm run migrate && npm start`) with only `NODE_ENV=production`, `CUSTOM_DOMAIN_USE_HTTPS=true`, `PORT`, `DATABASE_URL`, `DEFAULT_DOMAIN=https://trytofu.ai` and `ADMIN_SETUP_PASSWORD`. To keep the server on 127.0.0.1, a test-only preload outside the tree bound its port there. The log read `Batch 1 run: 10 migrations`, `> Turned on row-level security on 8 of Kutt's tables for Supabase's Data API`, `> Ready on ...`, and showed no error.
+- Through the API: `GET /` answered 302 to `/create-admin`. `POST /api/v2/auth/create-admin` answered 201, and its token now carries `sub`, the new account's id (1). With that token as the `token` cookie, `POST /api/v2/links` answered 201 (`https://trytofu.ai/picnic`) and `GET /api/v2/users` answered 200 with the account's email. The same steps on `pin/2026-10-25`, run the same way on a second scratch database, gave a token without `sub`, and both requests answered 401. The stored account had role `ADMIN` and was verified. A second create-admin answered 400, and `/create-admin` then answered 302 to `/login`. With the accounts emptied again: no setup password, 401; a wrong one, 401; the right one, 201, and its token read `GET /api/v2/links` (200; 401 without it).
+- In the browser (Playwright's headless Chromium, 127.0.0.1 only, every other host blocked): `/` went to `/create-admin`; the form, filled with an email address, a password and the setup password, answered "Welcome. Redirecting to homepage..." and then showed the homepage signed in, with "Settings", "Admin" and "Log out" in the header, no sign-in form and the `token` cookie set. A link made through the homepage form came back as `trytofu.ai/<address>`, and a reload kept the session. The only page error was upstream's `onSearchInputLoad` one on each homepage load.
+- Tofu's own check on the pushed `tofu` branch at `742816483138496aca6dcbf0bb4041d2e6fcd066` (before this file was updated) printed `kutt tofu root=(repo) detect=container files= 222 published= 211 -> not on the static lane | refused: typex5, server_codex187, configurationx2 | build: not_vite | safety ok (1 findings)` and `free static limit: 211/500 published files | archive 200 432354`.
+- The server was stopped and the database dropped afterwards.
+
+### `pin/2026-10-25`: everything else
 
 2026-10-25, on macOS arm64, against 127.0.0.1 only. No Docker (its daemon is not running here), nothing deployed. Node 22.22.3 and npm 10.9.8, the image's Node major version.
 
