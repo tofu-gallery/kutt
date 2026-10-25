@@ -9,6 +9,7 @@ const query = require("../queries");
 const utils = require("../utils");
 const redis = require("../redis");
 const mail = require("../mail");
+const tofu = require("../tofu");
 const env = require("../env");
 
 const CustomError = utils.CustomError;
@@ -118,7 +119,16 @@ async function createAdminUser(req, res) {
   if (isThereAUser) {
     throw new CustomError("Can not create the admin user because a user already exists.", 400);
   }
-  
+
+  // Tofu (2026-10-25): only someone who also knows ADMIN_SETUP_PASSWORD, which the owner saves as a hidden value,
+  // can create the admin account (server/tofu.js).
+  const setupProblem = tofu.checkAdminSetupPassword(env.ADMIN_SETUP_PASSWORD, req.body.setup_password);
+  if (setupProblem) {
+    const { message, status } = tofu.adminSetupRefusal(setupProblem);
+    res.locals.errors = { setup_password: message };
+    throw new CustomError(message, status);
+  }
+
   const salt = await bcrypt.genSalt(12);
   const password = await bcrypt.hash(req.body.password, salt);
 

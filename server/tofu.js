@@ -6,9 +6,11 @@
 //     (deriveJwtSecret);
 //   - take DEFAULT_DOMAIN as an address (https://...) as well as a bare host (normalizeDefaultDomain);
 //   - connect over TLS the way DATABASE_URL's sslmode asks, checked against DB_SSL_CA when there is one
-//     (databaseSsl).
+//     (databaseSsl);
+//   - let only the copy's owner create its first account, the administrator, with ADMIN_SETUP_PASSWORD
+//     (checkAdminSetupPassword).
 // It requires nothing of Kutt's own, so server/env.js can use it before Kutt's settings are read.
-const { createHash } = require("node:crypto");
+const { createHash, timingSafeEqual } = require("node:crypto");
 
 const isSet = value => typeof value === "string" && value !== "";
 
@@ -103,8 +105,69 @@ function databaseSsl(env) {
   return env.DB_SSL_REJECT_UNAUTHORIZED ? true : { rejectUnauthorized: false };
 }
 
+// The first account a new Kutt makes is its administrator, on the /create-admin page, and a copy is online at a public
+// address before its owner first opens it. So that page only completes for someone who also types ADMIN_SETUP_PASSWORD,
+// a hidden value the owner saves on the app's Keys & settings page; without that setting, nobody can make the account.
+// Wrong answers are counted for the whole server, not per visitor: ten in ten minutes, and it waits.
+const ADMIN_SETUP_MIN_LENGTH = 12;
+const ADMIN_SETUP_WINDOW_MS = 10 * 60 * 1000;
+const ADMIN_SETUP_MAX_FAILURES = 10;
+const adminSetupFailures = [];
+
+// "missing", "short" (fewer than 12 characters) or "ready".
+function adminSetupState(expected) {
+  if (!isSet(expected)) return "missing";
+  if (expected.length < ADMIN_SETUP_MIN_LENGTH) return "short";
+  return "ready";
+}
+
+// Null when `given` is the setup password, otherwise why not: "missing" or "short" (the owner's setting), "too_many"
+// or "wrong".
+function checkAdminSetupPassword(expected, given) {
+  const state = adminSetupState(expected);
+  if (state !== "ready") return state;
+
+  const now = Date.now();
+  while (adminSetupFailures.length && now - adminSetupFailures[0] > ADMIN_SETUP_WINDOW_MS) {
+    adminSetupFailures.shift();
+  }
+  if (adminSetupFailures.length >= ADMIN_SETUP_MAX_FAILURES) return "too_many";
+
+  const digest = value => createHash("sha256").update(value).digest();
+  if (typeof given === "string" && timingSafeEqual(digest(expected), digest(given))) return null;
+
+  adminSetupFailures.push(now);
+  return "wrong";
+}
+
+const ADMIN_SETUP_REFUSALS = {
+  missing: {
+    status: 403,
+    message: "This copy's owner has to save ADMIN_SETUP_PASSWORD first, as a hidden value on the app's Keys & settings page, and deploy again.",
+  },
+  short: {
+    status: 403,
+    message: "ADMIN_SETUP_PASSWORD is shorter than 12 characters. This copy's owner has to save a longer one and deploy again.",
+  },
+  too_many: {
+    status: 429,
+    message: "Too many wrong setup passwords. Wait 10 minutes, then try again.",
+  },
+  wrong: {
+    status: 401,
+    message: "The setup password is not correct.",
+  },
+};
+
+function adminSetupRefusal(reason) {
+  return ADMIN_SETUP_REFUSALS[reason] || ADMIN_SETUP_REFUSALS.wrong;
+}
+
 module.exports = {
+  adminSetupRefusal,
+  adminSetupState,
   applyDatabaseUrl,
+  checkAdminSetupPassword,
   databaseSsl,
   deriveJwtSecret,
   normalizeDefaultDomain,

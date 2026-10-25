@@ -2,6 +2,9 @@
   <h2 class="admin-form-title">
     Create an Admin account first:
   </h2>
+  {{!-- Tofu (2026-10-25): the admin account is created with ADMIN_SETUP_PASSWORD, which only this copy's owner
+        can save (server/tofu.js). Until it is saved, the page says how instead of showing the form. --}}
+  {{#if admin_setup_ready}}
   <label class="{{#if errors.email}}error{{/if}}">
     Email address:
     <input
@@ -25,6 +28,18 @@
     />
     {{#if errors.password}}<p class="error">{{errors.password}}</p>{{/if}}
   </label>
+  <label class="{{#if errors.setup_password}}error{{/if}}">
+    Setup password (the ADMIN_SETUP_PASSWORD you saved):
+    <input
+      name="setup_password"
+      id="setup_password"
+      type="password"
+      placeholder="Setup password..."
+      autocomplete="off"
+      hx-preserve="true"
+    />
+    {{#if errors.setup_password}}<p class="error">{{errors.setup_password}}</p>{{/if}}
+  </label>
   <div class="buttons-wrapper admin-form">
     <button type="submit" class="secondary full">
       <span>{{> icons/new_user}}</span>
@@ -32,6 +47,20 @@
       Create admin account
     </button>
   </div>
+  {{else}}
+  <p>
+    {{#if admin_setup_short}}
+      The <b>ADMIN_SETUP_PASSWORD</b> saved for this copy is shorter than 12 characters, so it cannot be used.
+    {{else}}
+      Only the owner of this copy can create its admin account, with a setup password they save first.
+    {{/if}}
+  </p>
+  <p>
+    If you are the owner: in Tofu, open this app's <b>Keys &amp; settings</b> page, save <b>ADMIN_SETUP_PASSWORD</b>
+    with <b>Hide this value after saving</b> turned on (at least 12 characters; a long random one is best), and deploy
+    the app again. Then come back to this page and create your account with it.
+  </p>
+  {{/if}}
   {{#unless errors}}
     {{#if error}}
       <p class="error">{{error}}</p>

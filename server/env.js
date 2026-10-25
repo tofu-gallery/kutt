@@ -65,6 +65,8 @@ const spec = {
   SERVER_CNAME_ADDRESS: str({ default: "" }),
   CUSTOM_DOMAIN_USE_HTTPS: bool({ default: false }),
   JWT_SECRET: str({ devDefault: "securekey" }),
+  // Tofu (2026-10-25): what the first (admin) account has to be created with (server/tofu.js)
+  ADMIN_SETUP_PASSWORD: str({ default: "" }),
   MAIL_ENABLED: bool({ default: false }),
   MAIL_HOST: str({ default: "" }),
   MAIL_PORT: num({ default: 587 }),

@@ -1,5 +1,6 @@
 const query = require("../queries");
 const utils = require("../utils");
+const tofu = require("../tofu");
 const env = require("../env");
 
 function isHTML(req, res, next) {
@@ -34,6 +35,10 @@ function config(req, res, next) {
   res.locals.mail_enabled = env.MAIL_ENABLED;
   res.locals.report_email = env.REPORT_EMAIL;
   res.locals.custom_styles = utils.getCustomCSSFileNames();
+  // Tofu (2026-10-25): whether the admin account can be created yet (server/tofu.js)
+  const adminSetup = tofu.adminSetupState(env.ADMIN_SETUP_PASSWORD);
+  res.locals.admin_setup_ready = adminSetup === "ready";
+  res.locals.admin_setup_short = adminSetup === "short";
   next();
 }
 
