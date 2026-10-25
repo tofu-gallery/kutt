@@ -5,6 +5,7 @@ if (!process.env.JWT_SECRET) {
 }
 
 const env = require("./server/env");
+const tofu = require("./server/tofu");
 
 const isSQLite = env.DB_CLIENT === "sqlite3" || env.DB_CLIENT === "better-sqlite3";
 
@@ -17,7 +18,8 @@ module.exports = {
     user: env.DB_USER,
     port: env.DB_PORT,
     password: env.DB_PASSWORD,
-    ssl: env.DB_SSL,
+    // Tofu (2026-10-25): DB_SSL as DATABASE_URL's sslmode asks (server/tofu.js, databaseSsl)
+    ssl: tofu.databaseSsl(env),
   },
   useNullAsDefault: true,
   migrations: {

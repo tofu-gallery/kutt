@@ -1,6 +1,7 @@
 const knex = require("knex");
 
 const env = require("./env");
+const tofu = require("./tofu");
 
 const isSQLite = env.DB_CLIENT === "sqlite3" || env.DB_CLIENT === "better-sqlite3";
 const isPostgres = env.DB_CLIENT === "pg" || env.DB_CLIENT === "pg-native";
@@ -15,7 +16,8 @@ const db = knex({
     database: env.DB_NAME,
     user: env.DB_USER,
     password: env.DB_PASSWORD,
-    ssl: env.DB_SSL,
+    // Tofu (2026-10-25): DB_SSL as DATABASE_URL's sslmode asks (server/tofu.js, databaseSsl)
+    ssl: tofu.databaseSsl(env),
     pool: {
       min: env.DB_POOL_MIN,
       max: env.DB_POOL_MAX

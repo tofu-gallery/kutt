@@ -21,6 +21,13 @@ if (process.env.JWT_SECRET === "") {
   delete process.env.JWT_SECRET;
 }
 
+// Tofu (2026-10-25): read the database from DATABASE_URL, derive JWT_SECRET from it when unset, and take
+// DEFAULT_DOMAIN as an address too. See server/tofu.js; a setting that is already set is kept.
+const tofu = require("./tofu");
+tofu.applyDatabaseUrl(process.env);
+tofu.deriveJwtSecret(process.env);
+tofu.normalizeDefaultDomain(process.env);
+
 // if is started with the --production argument, then set NODE_ENV to production
 if (process.argv.includes("--production")) {
   process.env.NODE_ENV = "production";
@@ -41,6 +48,9 @@ const spec = {
   DB_USER: str({ default: "postgres" }),
   DB_PASSWORD: str({ default: "" }),
   DB_SSL: bool({ default: false }),
+  // Tofu (2026-10-25): how DB_SSL connects (server/tofu.js, databaseSsl)
+  DB_SSL_REJECT_UNAUTHORIZED: bool({ default: true }),
+  DB_SSL_CA: str({ default: "" }),
   DB_POOL_MIN: num({ default: 0 }),
   DB_POOL_MAX: num({ default: 10 }),
   REDIS_ENABLED: bool({ default: false }),
