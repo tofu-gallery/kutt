@@ -8,7 +8,8 @@
 //   - connect over TLS the way DATABASE_URL's sslmode asks, checked against DB_SSL_CA when there is one
 //     (databaseSsl);
 //   - let only the copy's owner create its first account, the administrator, with ADMIN_SETUP_PASSWORD
-//     (checkAdminSetupPassword).
+//     (checkAdminSetupPassword);
+//   - turn row-level security on for Kutt's own tables on a Supabase database (protectTablesFromDataApi).
 // It requires nothing of Kutt's own, so server/env.js can use it before Kutt's settings are read.
 const { createHash, timingSafeEqual } = require("node:crypto");
 
@@ -163,6 +164,44 @@ function adminSetupRefusal(reason) {
   return ADMIN_SETUP_REFUSALS[reason] || ADMIN_SETUP_REFUSALS.wrong;
 }
 
+// Kutt's own tables, and knex's record of the migrations it ran.
+const KUTT_TABLES = ["users", "ips", "domains", "hosts", "links", "visits", "knex_migrations", "knex_migrations_lock"];
+
+// Tofu's databases are Supabase PostgreSQL. On a database whose default privileges still give every new table in public
+// to the Data API's roles (anon and authenticated), anyone with the project's public key could read and change Kutt's
+// tables through the Data API: users, with password hashes and API keys, included. With row-level security on and no
+// policy, those roles see no row. Kutt's own connection owns the tables, so row-level security does not limit it.
+// This runs at every start, never turns row-level security off, touches no other table, and does nothing on a
+// database without those roles. On a failure Kutt logs a warning and starts anyway.
+async function protectTablesFromDataApi(knex) {
+  try {
+    const roles = await knex.raw(
+      "select count(*)::int as found from pg_roles where rolname in ('anon', 'authenticated')"
+    );
+    if (roles.rows[0].found < 2) return;
+
+    const tables = await knex.raw(
+      `select c.relname as name
+         from pg_class c join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity
+          and pg_has_role(c.relowner, 'USAGE')
+          and c.relname in (${KUTT_TABLES.map(() => "?").join(", ")})`,
+      KUTT_TABLES
+    );
+    for (const { name } of tables.rows) {
+      await knex.transaction(async trx => {
+        await trx.raw("set local lock_timeout = '5s'");
+        await trx.raw("alter table ?? enable row level security", [`public.${name}`]);
+      });
+    }
+    if (tables.rows.length) {
+      console.log(`> Turned on row-level security on ${tables.rows.length} of Kutt's tables for Supabase's Data API`);
+    }
+  } catch (error) {
+    console.warn("> Could not turn on row-level security on Kutt's tables:", error.message);
+  }
+}
+
 module.exports = {
   adminSetupRefusal,
   adminSetupState,
@@ -171,4 +210,5 @@ module.exports = {
   databaseSsl,
   deriveJwtSecret,
   normalizeDefaultDomain,
+  protectTablesFromDataApi,
 };

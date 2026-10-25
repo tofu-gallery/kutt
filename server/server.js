@@ -15,6 +15,8 @@ const locals = require("./handlers/locals.handler");
 const links = require("./handlers/links.handler");
 const routes = require("./routes");
 const utils = require("./utils");
+const knex = require("./knex");
+const tofu = require("./tofu");
 
 
 // run the cron jobs
@@ -86,7 +88,13 @@ app.get("*", renders.notFound);
 
 // handle errors coming from above routes
 app.use(helpers.error);
-  
-app.listen(env.PORT, () => {
-  console.log(`> Ready on http://localhost:${env.PORT}`);
+
+// Tofu (2026-10-25): on PostgreSQL, Kutt's tables get row-level security for Supabase's Data API before the server
+// takes requests (server/tofu.js, protectTablesFromDataApi, which never fails the start).
+const ready = knex.isPostgres ? tofu.protectTablesFromDataApi(knex) : Promise.resolve();
+
+ready.then(() => {
+  app.listen(env.PORT, () => {
+    console.log(`> Ready on http://localhost:${env.PORT}`);
+  });
 });
