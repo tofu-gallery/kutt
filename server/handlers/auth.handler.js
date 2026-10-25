@@ -139,7 +139,11 @@ async function createAdminUser(req, res) {
     verified: true 
   });
 
-  const token = utils.signToken(user);
+  // Tofu (2026-10-25): sign the token for the stored account. query.user.add returns what it inserted, without the
+  // new row's id, so upstream's token had no "sub", which the JWT strategy refuses (server/passport.js): the owner
+  // was not signed in after creating the admin account and had to sign in again.
+  const created = await query.user.find({ email: user.email });
+  const token = utils.signToken(created);
 
   if (req.isHTML) {
     utils.setToken(res, token);
