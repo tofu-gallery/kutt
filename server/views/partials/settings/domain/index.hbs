@@ -20,15 +20,19 @@
   </p>
   <p>Then, add the domain via the form below:</p>
 {{else}}
+  {{#if server_ip_address}}
   <p>
-    Point your domain's A record to 
-    {{#if server_ip_address}}
+    Point your domain's A record to
       <b>{{server_ip_address}}</b>
-    {{else}}
-      our <b>IP address</b>
-    {{/if}} 
     then add the domain via the form below:
   </p>
+  {{else}}
+  {{!-- Tofu (2026-10-25): with no server address to name, the domain is connected where the app is hosted. --}}
+  <p>
+    First connect your domain to this app where it is hosted: in Tofu, on the app's <b>Domains</b> page, which
+    lists the DNS records to add. Then add the domain via the form below:
+  </p>
+  {{/if}}
 {{/if}}
 
 {{> settings/domain/table}}
