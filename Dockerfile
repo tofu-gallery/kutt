@@ -27,4 +27,6 @@ COPY . .
 EXPOSE 3000
 
 # intialize database and run the app
-CMD npm run migrate && npm start
+# Tofu (2026-10-26): the schema step is server/tofu-migrate.js instead of `npm run migrate`, so that several starts at
+# once on the same database take turns (TOFU.md, "Start-up when several starts run at once").
+CMD node server/tofu-migrate.js && npm start
