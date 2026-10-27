@@ -120,7 +120,10 @@ function databaseSsl(env) {
 const ADMIN_SETUP_MIN_LENGTH = 12;
 const ADMIN_SETUP_WINDOW_MS = 10 * 60 * 1000;
 const ADMIN_SETUP_MAX_FAILURES = 10;
-// At most this many addresses are remembered; past that, the one whose last wrong answer is oldest is forgotten.
+// At most this many addresses are remembered; past that, the one whose last wrong answer is oldest is forgotten. So the
+// count stops one guesser, not a crowd: someone who takes turns among more addresses than this (or IPv6 /64s: one
+// /48 holds 65,536) has each one forgotten before its second wrong answer, and none is ever refused. A long random
+// setup password is what protects a copy then.
 const ADMIN_SETUP_MAX_CLIENTS = 1000;
 // Address -> the times of its wrong answers, oldest first (never more than ten; those older than the window are dropped
 // as answers come in). An address moves to the end at each wrong answer, so the addresses at the start are the ones
