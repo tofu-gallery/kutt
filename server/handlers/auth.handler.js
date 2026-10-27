@@ -122,7 +122,8 @@ async function createAdminUser(req, res) {
 
   // Tofu (2026-10-25): only someone who also knows ADMIN_SETUP_PASSWORD, which the owner saves as a hidden value,
   // can create the admin account (server/tofu.js).
-  const setupProblem = tofu.checkAdminSetupPassword(env.ADMIN_SETUP_PASSWORD, req.body.setup_password);
+  // Tofu (2026-10-27): the request goes along, so wrong answers are counted per visitor address.
+  const setupProblem = tofu.checkAdminSetupPassword(env.ADMIN_SETUP_PASSWORD, req.body.setup_password, req);
   if (setupProblem) {
     const { message, status } = tofu.adminSetupRefusal(setupProblem);
     res.locals.errors = { setup_password: message };

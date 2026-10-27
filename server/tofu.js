@@ -8,11 +8,12 @@
 //   - connect over TLS the way DATABASE_URL's sslmode asks, checked against DB_SSL_CA when there is one
 //     (databaseSsl);
 //   - let only the copy's owner create its first account, the administrator, with ADMIN_SETUP_PASSWORD
-//     (checkAdminSetupPassword);
+//     (checkAdminSetupPassword; wrong answers counted per visitor address, adminSetupClient, 2026-10-27);
 //   - turn row-level security on for Kutt's own tables on a Supabase database (protectTablesFromDataApi);
 //   - run the migrations and that as one step that only one start at a time takes (prepareDatabase, 2026-10-26).
 // It requires nothing of Kutt's own, so server/env.js can use it before Kutt's settings are read.
 const { createHash, timingSafeEqual } = require("node:crypto");
+const { isIP } = require("node:net");
 
 const isSet = value => typeof value === "string" && value !== "";
 
@@ -110,11 +111,18 @@ function databaseSsl(env) {
 // The first account a new Kutt makes is its administrator, on the /create-admin page, and a copy is online at a public
 // address before its owner first opens it. So that page only completes for someone who also types ADMIN_SETUP_PASSWORD,
 // a hidden value the owner saves on the app's Keys & settings page; without that setting, nobody can make the account.
-// Wrong answers are counted for the whole server, not per visitor: ten in ten minutes, and it waits.
+// Tofu (2026-10-27): wrong answers are counted per visitor address (adminSetupClient). After ten in ten minutes from
+// one address, every answer from that address, the right one included, waits until the oldest of the ten is ten
+// minutes old; no other address is affected. The pins before counted them for the whole server, so anyone who knew a
+// new copy's address could keep its owner from making the account for as long as they kept guessing.
 const ADMIN_SETUP_MIN_LENGTH = 12;
 const ADMIN_SETUP_WINDOW_MS = 10 * 60 * 1000;
 const ADMIN_SETUP_MAX_FAILURES = 10;
-const adminSetupFailures = [];
+// At most this many addresses are remembered; past that, the one whose last wrong answer is oldest is forgotten.
+const ADMIN_SETUP_MAX_CLIENTS = 1000;
+// Address -> the times of its wrong answers in the window, oldest first (never more than ten). An address moves to the
+// end at each wrong answer, so the addresses at the start are the ones whose last wrong answer is oldest.
+const adminSetupFailures = new Map();
 
 // "missing", "short" (fewer than 12 characters) or "ready".
 function adminSetupState(expected) {
@@ -123,22 +131,75 @@ function adminSetupState(expected) {
   return "ready";
 }
 
+// The address a request's setup password is counted under. Tofu's container hosting replaces X-Forwarded-For with the
+// visitor's own address, whatever the visitor sent, and the server's own peer is a local proxy at 127.0.0.1 (measured
+// 2026-10-27). So it is the last entry of X-Forwarded-For, the one the nearest proxy wrote (on Tofu the only one), and
+// without that header the peer's address. IPv4 written as IPv6 (::ffff:1.2.3.4) is read as IPv4, and an IPv6 address
+// is counted by its /64, so one network cannot give itself fresh addresses to guess from.
+function adminSetupClient(req) {
+  const forwarded = req && req.headers ? req.headers["x-forwarded-for"] : undefined;
+  const last = typeof forwarded === "string" ? forwarded.slice(forwarded.lastIndexOf(",") + 1) : "";
+  return clientAddress(last) || clientAddress(req && req.socket ? req.socket.remoteAddress : "") || "unknown";
+}
+
+// An address as it is counted ("1.2.3.4", "2001:db8:0:1::/64"), or "" when `value` is not an IP address.
+function clientAddress(value) {
+  const address = typeof value === "string" ? value.trim() : "";
+  const version = isIP(address);
+  if (version === 4) return address;
+  if (version !== 6) return "";
+  const groups = ipv6Groups(address);
+  if (groups.slice(0, 5).every(group => group === 0) && groups[5] === 0xffff) {
+    return [groups[6] >> 8, groups[6] & 255, groups[7] >> 8, groups[7] & 255].join(".");
+  }
+  return groups.slice(0, 4).map(group => group.toString(16)).join(":") + "::/64";
+}
+
+// The eight 16-bit groups of an IPv6 address that isIP accepted, without its zone ("%en0").
+function ipv6Groups(address) {
+  let text = address.toLowerCase().replace(/%.*$/, "");
+  const dotted = text.match(/(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (dotted) {
+    const [a, b, c, d] = dotted.slice(1).map(Number);
+    text = text.slice(0, dotted.index) + ((a << 8) | b).toString(16) + ":" + ((c << 8) | d).toString(16);
+  }
+  const [head, tail] = text.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const zeros = tail === undefined ? [] : new Array(8 - left.length - right.length).fill("0");
+  return [...left, ...zeros, ...right].map(group => parseInt(group, 16));
+}
+
 // Null when `given` is the setup password, otherwise why not: "missing" or "short" (the owner's setting), "too_many"
-// or "wrong".
-function checkAdminSetupPassword(expected, given) {
+// (ten wrong answers from the address of `req` in the last ten minutes) or "wrong".
+function checkAdminSetupPassword(expected, given, req) {
   const state = adminSetupState(expected);
   if (state !== "ready") return state;
 
   const now = Date.now();
-  while (adminSetupFailures.length && now - adminSetupFailures[0] > ADMIN_SETUP_WINDOW_MS) {
-    adminSetupFailures.shift();
+  // Addresses whose last wrong answer has left the window are all at the start.
+  const stale = times => !times.length || now - times[times.length - 1] > ADMIN_SETUP_WINDOW_MS;
+  for (const [key, times] of adminSetupFailures) {
+    if (!stale(times)) break;
+    adminSetupFailures.delete(key);
   }
-  if (adminSetupFailures.length >= ADMIN_SETUP_MAX_FAILURES) return "too_many";
+
+  const address = adminSetupClient(req);
+  const failures = adminSetupFailures.get(address) || [];
+  while (failures.length && now - failures[0] > ADMIN_SETUP_WINDOW_MS) {
+    failures.shift();
+  }
+  if (failures.length >= ADMIN_SETUP_MAX_FAILURES) return "too_many";
 
   const digest = value => createHash("sha256").update(value).digest();
   if (typeof given === "string" && timingSafeEqual(digest(expected), digest(given))) return null;
 
-  adminSetupFailures.push(now);
+  failures.push(now);
+  adminSetupFailures.delete(address);
+  adminSetupFailures.set(address, failures);
+  if (adminSetupFailures.size > ADMIN_SETUP_MAX_CLIENTS) {
+    adminSetupFailures.delete(adminSetupFailures.keys().next().value);
+  }
   return "wrong";
 }
 
@@ -259,6 +320,7 @@ function reportMigrations([batchNo, log]) {
 }
 
 module.exports = {
+  adminSetupClient,
   adminSetupRefusal,
   adminSetupState,
   applyDatabaseUrl,
