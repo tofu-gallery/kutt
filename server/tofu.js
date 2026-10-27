@@ -111,17 +111,20 @@ function databaseSsl(env) {
 // The first account a new Kutt makes is its administrator, on the /create-admin page, and a copy is online at a public
 // address before its owner first opens it. So that page only completes for someone who also types ADMIN_SETUP_PASSWORD,
 // a hidden value the owner saves on the app's Keys & settings page; without that setting, nobody can make the account.
-// Tofu (2026-10-27): wrong answers are counted per visitor address (adminSetupClient). After ten in ten minutes from
-// one address, every answer from that address, the right one included, waits until the oldest of the ten is ten
-// minutes old; no other address is affected. The pins before counted them for the whole server, so anyone who knew a
-// new copy's address could keep its owner from making the account for as long as they kept guessing.
+// Tofu (2026-10-27): wrong answers are counted per visitor address (adminSetupClient; an IPv6 /64 is one address).
+// After ten in ten minutes from one address, every answer from that address, the right one included, is refused until
+// the oldest of the ten is more than ten minutes old. No other address is affected, but someone who shares the owner's
+// address (one public IPv4 address for a whole network, or one IPv6 /64) can still keep the owner waiting. The pins
+// before counted them for the whole server, so anyone who knew a new copy's address could keep its owner from making
+// the account for as long as they kept guessing.
 const ADMIN_SETUP_MIN_LENGTH = 12;
 const ADMIN_SETUP_WINDOW_MS = 10 * 60 * 1000;
 const ADMIN_SETUP_MAX_FAILURES = 10;
 // At most this many addresses are remembered; past that, the one whose last wrong answer is oldest is forgotten.
 const ADMIN_SETUP_MAX_CLIENTS = 1000;
-// Address -> the times of its wrong answers in the window, oldest first (never more than ten). An address moves to the
-// end at each wrong answer, so the addresses at the start are the ones whose last wrong answer is oldest.
+// Address -> the times of its wrong answers, oldest first (never more than ten; those older than the window are dropped
+// as answers come in). An address moves to the end at each wrong answer, so the addresses at the start are the ones
+// whose last wrong answer is oldest.
 const adminSetupFailures = new Map();
 
 // "missing", "short" (fewer than 12 characters) or "ready".
@@ -133,9 +136,11 @@ function adminSetupState(expected) {
 
 // The address a request's setup password is counted under. Tofu's container hosting replaces X-Forwarded-For with the
 // visitor's own address, whatever the visitor sent, and the server's own peer is a local proxy at 127.0.0.1 (measured
-// 2026-10-27). So it is the last entry of X-Forwarded-For, the one the nearest proxy wrote (on Tofu the only one), and
-// without that header the peer's address. IPv4 written as IPv6 (::ffff:1.2.3.4) is read as IPv4, and an IPv6 address
-// is counted by its /64, so one network cannot give itself fresh addresses to guess from.
+// 2026-10-27). So it is the last entry of X-Forwarded-For, the one the nearest proxy wrote (on Tofu the only one), or
+// the peer's address when that header is missing or its last entry is not an IP address. Where nothing in front of the
+// server writes that header, a visitor can send their own and choose the address they are counted under. IPv4 written
+// as IPv6 (::ffff:1.2.3.4) is read as IPv4, and an IPv6 address is counted by its /64, so a visitor cannot get fresh
+// allowances by changing the last 64 bits of their address, which a device can pick for itself.
 function adminSetupClient(req) {
   const forwarded = req && req.headers ? req.headers["x-forwarded-for"] : undefined;
   const last = typeof forwarded === "string" ? forwarded.slice(forwarded.lastIndexOf(",") + 1) : "";
