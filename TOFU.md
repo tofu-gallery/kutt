@@ -3,7 +3,7 @@
 This repository is Tofu's copy of **thedevs-network/kutt** (licence: MIT), listed in Tofu's app gallery as **Kutt**: short links with click counts, on your own address.
 
 - `main` mirrors the upstream repository and is never committed to by Tofu.
-- `tofu` carries Tofu's own changes; tags named `pin/<date>` mark the versions the gallery points to. The current pin is `pin/2026-10-26`.
+- `tofu` carries Tofu's own changes; tags named `pin/<date>` mark the versions the gallery points to. The current pin is `pin/2026-10-27`.
 - A visitor who chooses this app gets a private snapshot of the pinned version in their own Tofu account. Their copy does not follow upstream updates.
 - Upstream: https://github.com/thedevs-network/kutt at `029da42b2459693681886665589fd9512d6b473c` (2026-10-19, package version 3.2.6).
 
@@ -51,7 +51,10 @@ A new Kutt has no account. Its first visitor is sent to `/create-admin`, and the
 3. The page says "Welcome. Redirecting to homepage..." and opens the homepage signed in to the new administrator account, with **Admin** and **Settings** in the header. (Upstream Kutt 3.2.6 does not sign the new account in at this step, so its owner sees the sign-in form and signs in again; this copy does, see "What Tofu changes".)
 
 - Until `ADMIN_SETUP_PASSWORD` is saved, the page explains this and shows no form, and a request to create the account (`POST /api/auth/create-admin`, also as `/api/v2/...`) is refused. A saved value shorter than 12 characters is refused the same way.
-- Wrong setup passwords are counted for the whole server, not per visitor: after ten wrong ones in ten minutes, every attempt, the right one included, waits until ten minutes have passed. A stranger who keeps guessing can therefore make the owner wait. Making the app private on Tofu until the account exists stops that.
+- Wrong setup passwords are counted per visitor address: after ten wrong ones in ten minutes from one address, every attempt from that address, the right one included, waits until the oldest of those ten is ten minutes old. Other addresses are not affected, so a stranger who keeps guessing cannot make the owner wait, as they could with the pins before 2026-10-27, which counted wrong answers for the whole server. Making the app private on Tofu until the account exists keeps strangers from guessing at all.
+  - The address is the last entry of `X-Forwarded-For`, the one the nearest proxy wrote, or the connection's own address when that header is missing or its last entry is not an address. IPv6 addresses are counted by their /64, and `::ffff:1.2.3.4` as `1.2.3.4`.
+  - On Tofu that entry is the visitor's own address and the only one: measured on 2026-10-27 with a test container, Tofu's container hosting replaced `X-Forwarded-For`, `X-Real-IP`, `X-Vercel-Forwarded-For` and `Forwarded` with the visitor's address whatever the visitor sent in them, and the connection the app saw came from a local proxy at 127.0.0.1.
+  - The counts are kept in the server's memory for at most 1,000 addresses. Past that, the address whose last wrong answer is oldest is forgotten, so someone guessing from more than 1,000 addresses at once can guess more often than ten times in ten minutes from each. A restart clears the counts.
 - Once any account exists, the page sends people to the sign-in page, and the setup password is never read again. Changing or removing it later changes nothing.
 - Sign-up is closed: `DISALLOW_REGISTRATION` is `true` by default, and sign-up also needs mail, which is off. The administrator adds the other people under **Admin > Users > Create user** (keep **Verified** ticked, as it is by default). Making links needs an account: `DISALLOW_ANONYMOUS_LINKS` is `true` by default, and an owner should keep it so on a public address.
 
@@ -99,18 +102,35 @@ Tofu's container hosting can start a new deployment several times within a secon
 - The lock through Tofu's own pooler: it was checked here against a stand-in that lends a server connection per transaction (see Verification), not against Supavisor. In particular, a start that dies while it holds the lock lets the next one go only if the pooler ends that start's transaction when its connection goes; the stand-in closes the server connection then.
 - What Tofu's hosting does with a start that exits with 1 (after 120 seconds without the lock, or a failed step).
 - The `/create-admin` page before and after the owner saves `ADMIN_SETUP_PASSWORD` and deploys again, and the owner signed in on the homepage right after creating the account. The sign-in cookie is marked `Secure` in production, which the copy's HTTPS address allows.
-- Short links on the copy's address redirect, and their visits are counted with the visitor's country, which depends on whether Tofu's proxy puts the visitor's own address first in `X-Forwarded-For`. If a visitor could set that header themselves, they could also choose the address that rate limits (when turned on) count them under.
+- Short links on the copy's address redirect, and their visits are counted with the visitor's country. Kutt looks the country up for the first address in `X-Forwarded-For`, which on Tofu is the visitor's own address and the only one (measured on 2026-10-27 with a test container, not with Kutt; see "The first account"), so a visitor cannot choose the address that rate limits (when turned on) and the setup password's count use.
 - A custom domain connected on Tofu reaches the container with its own `Host`, so Kutt's custom domains work.
 
 ## Licence
 
-- MIT. `LICENSE` and every copyright notice stay exactly as upstream has them. `server/tofu.js` and `server/tofu-migrate.js` are Tofu's own files, and every other file Tofu changed carries a `Tofu (2026-10-25)` or `Tofu (2026-10-26)` note at the change. MIT asks for no source offer.
+- MIT. `LICENSE` and every copyright notice stay exactly as upstream has them. `server/tofu.js` and `server/tofu-migrate.js` are Tofu's own files, and every other file Tofu changed carries a `Tofu (2026-10-25)`, `Tofu (2026-10-26)` or `Tofu (2026-10-27)` note at the change. MIT asks for no source offer.
 - The Kutt name and logo belong to the upstream project; the gallery uses them only to say which app this is.
 - Bundled by upstream: the Nunito font (`static/fonts/nunito-variable.woff2`, SIL Open Font License 1.1, with no copy of that licence in the repository); Chart.js, htmx and qrcode.js (`static/libs/`, each under its own licence); and the world map the stats page draws (`server/utils/map.json`, whose source the repository does not name).
 - The image installs Kutt's npm packages (`package-lock.json`), each under its own licence. geoip-lite among them carries country data by MaxMind ("This product includes GeoLite data created by MaxMind, available from http://maxmind.com/"), under MaxMind's terms.
 - Upstream's lockfile is used as it is. `npm audit --omit=dev` lists 12 advisories in the production packages (3 critical: handlebars and hbs, the server's own page templates, and proxy-addr), which this copy does not change.
 
 ## Verification
+
+### `pin/2026-10-27`: wrong setup passwords counted per address
+
+2026-10-27 (UTC), on macOS arm64, against 127.0.0.1 only. No Docker, nothing deployed. Node 22.22.3, npm 10.9.8, PostgreSQL 14.24.
+
+- Unit checks of `server/tofu.js` (a test-only script outside the tree, run with `node --expose-gc`, 12 checks, all passed), with the clock faked by replacing `Date.now` in the script:
+  - The address: the last entry of `X-Forwarded-For` (entries put in front of it change nothing, and a last entry that is not an address falls back to the connection's address, never to an earlier entry), the connection's address without that header, `::ffff:` addresses as IPv4 (dotted and hex), IPv6 by its /64 (also with a zone such as `%en0`).
+  - Address A's ten wrong answers made A's next answer, the right one included, `too_many`, while B's right password was accepted at once; B's own wrong answers were counted on their own (`too_many` after B's tenth), and a third address and a request without the header still got in.
+  - A was still refused exactly ten minutes after its oldest wrong answer and got one more answer a millisecond later, as before, then was refused again until its next oldest had left the window.
+  - Two IPv6 addresses in one /64 shared an allowance and one in the next /64 did not; `::ffff:1.2.3.4` and `1.2.3.4` shared one.
+  - With A refused and 999 other addresses counted, A stayed refused; the 1,000th other address made the server forget A. For the size checks the script loaded the file's own source with one line appended that exposes its map: 200,000 addresses left 1,000 entries, an address refused after ten wrong answers kept ten times and no more, and one answer after the window dropped every expired address (1 entry left). The 200,000 addresses grew the heap by 0.30 MB; the same entries in a map without the bound, by 24.9 MB.
+  - Unchanged: `missing` and `short` (and not counted), the refusals' statuses and messages, an answer that is not a string counted as wrong.
+  - The same script against `pin/2026-10-26`'s `server/tofu.js` failed 8 of the 12 checks: once A had ten wrong answers, B's right password was refused with `too_many`.
+- The app: `git archive` of `2dce3143ba08b72cd7bdbc66f18f648340d6be41` (this pin's code; only this file changed after it), unpacked with every file's execute bit removed; `NODE_ENV=production npm ci --omit=dev` added 245 packages. A scratch PostgreSQL 14 cluster on 127.0.0.1, with a new database owned by a login role for Kutt. Started as the image's `CMD` (`node server/tofu-migrate.js && npm start`) with only `NODE_ENV=production`, `CUSTOM_DOMAIN_USE_HTTPS=true`, `PORT`, `DATABASE_URL` (`?sslmode=disable`), `DEFAULT_DOMAIN=https://trytofu.ai` and `ADMIN_SETUP_PASSWORD` (the output of `openssl rand -base64 24`), so `TRUST_PROXY` was `true` and `ENABLE_RATE_LIMIT` `false`, upstream's defaults; a test-only preload outside the tree bound its port to 127.0.0.1. The log read `> Batch 1 run: 10 migrations` and `> Ready on ...` and showed no error.
+- `POST /api/v2/auth/create-admin` with curl, each request with its own `X-Forwarded-For`: from `203.0.113.7`, ten wrong setup passwords, 401 each; then the right one, 429 ("Too many wrong setup passwords. Wait 10 minutes, then try again."), also as `198.51.100.1, 203.0.113.7` and as `::ffff:203.0.113.7`. From `198.51.100.9`, three wrong ones, 401 each; without the header (the connection from 127.0.0.1), a wrong one, 401. Five wrong ones from `2001:db8:abcd:12::1` and five from `2001:db8:abcd:12::2`, 401 each; then the right one from `2001:db8:abcd:12:ffff::3`, 429; a wrong one from `2001:db8:abcd:13::1`, 401. Then the right one from `198.51.100.9`, 201 with a token; the right one from `203.0.113.7` after that, 400 ("a user already exists"); and `/create-admin`, 302 to `/login`.
+- Not checked here: the address on Tofu's own hosting with Kutt (the header measurement on 2026-10-27 used a test container, see "The first account"), and the wait running out on the running server (the unit checks fake the clock instead).
+- The server and the scratch cluster were stopped afterwards.
 
 ### `pin/2026-10-26`: several starts at once
 
